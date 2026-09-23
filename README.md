@@ -6,11 +6,11 @@ Migración del proyecto de Google AI Studio a un proyecto Node.js propio. La int
 
 1. Requiere Node.js 20 o superior. Instala dependencias con `npm ci`.
 2. Activa Google Sheets API y Google Drive API en un proyecto de Google Cloud y crea una cuenta de servicio.
-3. Comparte las dos hojas de cálculo y las carpetas de destino con el correo de la cuenta de servicio, con permiso de editor. La opción «Cualquiera con el enlace» por sí sola no autoriza escrituras mediante la API.
-4. Guarda el JSON completo de la cuenta de servicio como secreto del servidor `GOOGLE_SERVICE_ACCOUNT_JSON`; alternativamente usa Application Default Credentials. Nunca uses una variable `VITE_` para esta clave. Configura `VITE_PUBLIC_APP_URL` al dominio final para los enlaces de firma y `GEMINI_API_KEY` si usarás la corrección de texto.
+3. Si usas cuenta de servicio, comparte las dos hojas de cálculo y las carpetas de destino con su correo, con permiso de editor. La opción «Cualquiera con el enlace» por sí sola no autoriza escrituras mediante la API.
+4. Guarda el JSON completo de la cuenta de servicio como secreto del servidor `GOOGLE_SERVICE_ACCOUNT_JSON`; alternativamente usa Application Default Credentials. Si tus carpetas están en Mi unidad y necesitas subir fotos o PDFs, usa las variables `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` y `GOOGLE_OAUTH_REFRESH_TOKEN` de una cuenta propietaria, obtenida una sola vez con consentimiento offline y permisos de Drive y Sheets. Este método tampoco exige login al usuario final. Nunca uses una variable `VITE_` para esta clave. Configura `VITE_PUBLIC_APP_URL` al dominio final para los enlaces de firma y `GEMINI_API_KEY` si usarás la corrección de texto.
 5. Ejecuta `npm run dev` en desarrollo. Para producción, `npm run build` y `npm start`. El servidor escucha en el puerto 3000; configura el proxy y TLS en el proveedor de alojamiento.
 
-Las hojas configuradas son la base principal y la de cotizaciones. Las carpetas usadas para fotos, firmas y guías deben admitir las operaciones de Drive de la cuenta de servicio. Para subir archivos, considera una unidad compartida: las cuentas de servicio no tienen cuota propia de almacenamiento en Mi unidad. Ajusta la configuración del proveedor de alojamiento para `supportsAllDrives` si la unidad lo requiere.
+Las hojas configuradas son la base principal y la de cotizaciones. Las carpetas usadas para fotos, firmas y guías deben admitir las operaciones de Drive de la cuenta de servicio. Para subir archivos mediante cuenta de servicio, usa una unidad compartida: las cuentas de servicio no tienen cuota propia de almacenamiento en Mi unidad. Las carpetas en Mi unidad requieren el token de actualización del propietario. Ajusta la configuración del proveedor de alojamiento para `supportsAllDrives` si la unidad lo requiere.
 
 ## Alcance y decisiones pendientes
 

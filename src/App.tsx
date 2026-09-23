@@ -14,6 +14,7 @@ import {
   Package,
   ArrowLeft,
   LogOut,
+  Shield,
 } from 'lucide-react';
 import TicketsModule from './modules/Tickets';
 import TecnicoModule from './modules/Tecnico';
@@ -26,6 +27,7 @@ import EmpresasModule from './modules/Empresas';
 import EditarTicketsModule from './modules/EditarTickets';
 import ActividadesInternasModule from './modules/ActividadesInternas';
 import CotizacionesModule from './modules/Cotizaciones';
+import UsuariosModule from './modules/Usuarios';
 import { auth } from './serviceAccess';
 
 export default function App() {
@@ -35,7 +37,10 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const isAdmin = authState === 'ready';
+  const [role, setRole] = useState<'admin' | 'user'>('user');
+  const [allowedModules, setAllowedModules] = useState<string[]>([]);
+  const isAuthenticated = authState === 'ready';
+  const isAdmin = isAuthenticated && role === 'admin';
 
   useEffect(() => {
     let mounted = true;
@@ -46,7 +51,7 @@ export default function App() {
         setLoginError(data.error);
         setAuthState('unconfigured');
       } else {
-        if (data.authenticated) { auth.currentUser.displayName = data.email; setEmail(data.email); }
+        if (data.authenticated) { auth.currentUser.displayName = data.email; setEmail(data.email); setRole(data.role); setAllowedModules(data.modules || []); }
         setAuthState(data.authenticated ? 'ready' : 'signedout');
       }
     }).catch(() => {
@@ -67,6 +72,8 @@ export default function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'No se pudo iniciar sesión');
       auth.currentUser.displayName = data.email;
+      setRole(data.role);
+      setAllowedModules(data.modules || []);
       setPassword('');
       setAuthState('ready');
     } catch (error: any) { setLoginError(error.message); }
@@ -76,6 +83,7 @@ export default function App() {
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
     setActiveModule(null);
+    setAllowedModules([]);
     setAuthState('signedout');
   };
 
@@ -178,7 +186,12 @@ export default function App() {
     }
   ];
 
-  const menuItems = allMenuItems;
+  const menuItems = allMenuItems.filter(item => isAdmin || allowedModules.includes(item.id));
+  if (isAdmin) menuItems.push({
+    label: 'USUARIOS Y PERMISOS', icon: Shield, id: 'USUARIOS',
+    colorClass: 'text-blue-400', bgClass: 'bg-blue-500/10 border-blue-500/30',
+    cardHover: 'hover:border-blue-500/40 hover:bg-blue-950/20'
+  });
 
   const getSignTicketId = (): string | null => {
     try {
@@ -211,12 +224,12 @@ export default function App() {
     return <ClientSignatureView ticketId={signTicketId} />;
   }
 
-  if (!isAdmin) {
+  if (!isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 text-slate-100">
         <form onSubmit={handleLogin} className="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-900 p-7 shadow-2xl">
           <h1 className="text-2xl font-bold">VSP Desk 2.0</h1>
-          <p className="mt-2 mb-6 text-sm text-slate-400">Acceso del administrador</p>
+          <p className="mt-2 mb-6 text-sm text-slate-400">Acceso a CRMVSP</p>
           <label className="block text-sm mb-4">Correo electrónico
             <input type="email" autoComplete="username" required value={email} onChange={e => setEmail(e.target.value)}
               className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-white" />
@@ -262,13 +275,17 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-          <div className="hidden sm:block text-right text-xs text-slate-300"><strong>Administrador</strong><br />{email}</div>
+          <div className="hidden sm:block text-right text-xs text-slate-300"><strong>{isAdmin ? 'Administrador' : 'Usuario'}</strong><br />{email}</div>
           <button onClick={handleLogout} title="Cerrar sesión" className="rounded-lg p-2 text-slate-300 hover:bg-slate-800 hover:text-white"><LogOut className="h-5 w-5" /></button>
         </div>
       </nav>
 
       <main className={`flex-1 flex flex-col w-full ${!activeModule ? 'items-center justify-start sm:justify-center overflow-y-auto p-2.5 sm:p-6 pb-6 sm:pb-8' : 'overflow-hidden p-0 sm:p-2'} min-h-0 custom-scrollbar`}>
-        {activeModule === 'TICKET' ? (
+        {activeModule === 'USUARIOS' && isAdmin ? (
+          <UsuariosModule />
+        ) : activeModule && !isAdmin && !allowedModules.includes(activeModule) ? (
+          <p className="p-8">No tienes acceso a este módulo.</p>
+        ) : activeModule === 'TICKET' ? (
           <TicketsModule />
         ) : activeModule === 'TECNICO' ? (
           <TecnicoModule />
@@ -297,7 +314,7 @@ export default function App() {
                   <p className="text-[10px] sm:text-xs text-slate-400">Selecciona el módulo para operar</p>
                 </div>
                 <div className="px-2.5 py-1 bg-blue-950/80 text-blue-300 border border-blue-800/50 rounded-full text-[9px] sm:text-xs font-bold uppercase tracking-wider shrink-0">
-                  Administrador
+                  {isAdmin ? 'Administrador' : 'Usuario'}
                 </div>
               </div>
               {menuItems.length === 0 ? (

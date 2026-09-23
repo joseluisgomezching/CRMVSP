@@ -147,12 +147,17 @@ export function normalizeTicket(raw: any, fallbackRowIndex?: number): Ticket | n
 export async function fetchAppData(): Promise<AppData> {
   const token = await getAccessToken();
   if (!token) throw new Error('No hay token de acceso disponible. Por favor inicia sesión con Google.');
+  const accessResponse = await fetch('/api/auth/me');
+  if (!accessResponse.ok) throw new Error('No se pudo validar la sesión');
+  const access = await accessResponse.json();
+  if (!access.authenticated) throw new Error('Inicia sesión');
+  const allowedTables = new Set<string>(access.tables || []);
 
   const allExpectedRanges = [
     'TICKET', 'EMPRESA', 'CONTACTOS', 'TECNICOS', 'CONTRATO', 
     'FOTOSTICKET', 'ACTIVIDADES', 'FOTOACT', 'REPUESTOS', 
-    'INTERNAMIENTO', 'RUTAS', 'TRANSPORTE', 'CAJA', 'ACTIVIDADESDIARIAS', 'ACCESOS', 'TRANACTI'
-  ];
+    'INTERNAMIENTO', 'RUTAS', 'TRANSPORTE', 'CAJA', 'ACTIVIDADESDIARIAS', 'TRANACTI'
+  ].filter(name => allowedTables.has(name));
 
   // Fetch existing sheets metadata
   const metaResponse = await fetch(
@@ -172,7 +177,7 @@ export async function fetchAppData(): Promise<AppData> {
 
   // Check if any expected sheets are missing (using normalized matching)
   const missingCanonicalSheets = allExpectedRanges.filter(sheet => !findSheetTitle(existingSheetTitles, sheet));
-  if (missingCanonicalSheets.length > 0) {
+  if (missingCanonicalSheets.length > 0 && access.role === 'admin') {
     // Create missing sheets
     const requests = missingCanonicalSheets.map(sheetName => ({
       addSheet: { properties: { title: sheetName } }
@@ -341,7 +346,7 @@ export async function fetchAppData(): Promise<AppData> {
       return map.set(mapKey, normalized);
     }, new Map<string, ActividadDiaria>()).values()),
     tranacti: Array.from(getObjects<Tranacti>('TRANACTI').reduce((map, obj) => map.set(obj.ID, obj), new Map()).values()),
-    accesos: rowsToObjects<Acceso>(getRows('ACCESOS'))
+    accesos: []
   };
 }
 
@@ -2006,4 +2011,3 @@ export async function saveTicketSignatureDirectly(
 
   return { driveUrl, targetRow, firmaColLetter, savedToSheet: true };
 }
-

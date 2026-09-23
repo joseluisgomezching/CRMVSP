@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { GoogleAuth, OAuth2Client } from 'google-auth-library';
-import { authReady, clearSession, configuredAdminEmail, isAdmin, issueSession, requireAdmin, verifyAdminPassword } from './serverAuth';
+import { authReady, clearSession, currentUser, authenticate, issueSession, requireAdmin, requireUser, listUsers, saveUser } from './serverAuth';
 
 interface StoredSignature {
   signature: string;
@@ -46,7 +46,48 @@ const ALLOWED_FOLDERS = new Set([
   '1EEQ9aMpJ_mrhODiGVDWolTyq5a6ScLcZ',
   '1nZKrXULwBYnjcfn9GiBjNvIZxHLyZsEs'
 ]);
-const uploadedFiles = new Set<string>();
+const uploadedFiles = new Map<string, string>();
+const FOLDER_MODULES: Record<string, string[]> = {
+  '14zJIbLf9bfeM0RZiwsPDXGzcqfUWJw0o': ['TICKET','TECNICO','EDITAR_TICKETS','INFORMES'],
+  '1Y0D-ZJ6ufLK6zuVxvp5vZjx7yq6hj_LV': ['TICKET','TECNICO','EDITAR_TICKETS'],
+  '1EEQ9aMpJ_mrhODiGVDWolTyq5a6ScLcZ': ['EMPRESAS'],
+  '1nZKrXULwBYnjcfn9GiBjNvIZxHLyZsEs': ['TICKET','TECNICO','INFORMES']
+};
+// Sheet access is granted per data group. Shared tables (for example TICKET) are
+// deliberately available to more than one module, because those modules use them.
+const TABLE_MODULES: Record<string, string[]> = {
+  TICKET: ['TICKET','TICKETS_CERRADOS','TECNICO','EDITAR_TICKETS','INFORMES','RENDIR_PASAJES'],
+  EMPRESA: ['TICKET','EMPRESAS','COTIZACIONES','EDITAR_TICKETS'],
+  CONTACTOS: ['TICKET','EMPRESAS','EDITAR_TICKETS'],
+  TECNICOS: ['TICKET','TECNICO','EMPRESAS','EDITAR_TICKETS'],
+  CONTRATO: ['TICKET','EMPRESAS','INFORMES'],
+  FOTOSTICKET: ['TECNICO','TICKET','INFORMES','EDITAR_TICKETS'],
+  ACTIVIDADES: ['TECNICO','TICKET','INFORMES','EDITAR_TICKETS'],
+  FOTOACT: ['TECNICO','INFORMES','EDITAR_TICKETS'],
+  REPUESTOS: ['TECNICO','INVENTARIO','EDITAR_TICKETS'],
+  INTERNAMIENTO: ['TECNICO','INVENTARIO','EDITAR_TICKETS'],
+  RUTAS: ['RENDIR_PASAJES','TECNICO'],
+  TRANSPORTE: ['RENDIR_PASAJES','TECNICO'],
+  CAJA: ['CAJA_CHICA'],
+  ACTIVIDADESDIARIAS: ['ACTIVIDADES'],
+  TRANACTI: ['TECNICO','INFORMES'],
+  COTIZACION: ['COTIZACIONES'], CLIENTE: ['COTIZACIONES'], VENDEDOR: ['COTIZACIONES'],
+  VENTA: ['COTIZACIONES'], ITEMVENTA: ['COTIZACIONES'], CALCULOVENTA: ['COTIZACIONES'],
+  ALQUILER: ['COTIZACIONES'], ITEMALQUILER: ['COTIZACIONES'], CALCULOALQUILER: ['COTIZACIONES'],
+  OUT: ['COTIZACIONES'], ITEMOUT: ['COTIZACIONES'], CALCULOOUT: ['COTIZACIONES'],
+  ACCESOS: []
+};
+const normalizeTab = (value: string) => value.replace(/^'/, '').replace(/'$/, '').replace(/''/g, "'").normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+function tabFromRange(range: unknown): string | null {
+  if (typeof range !== 'string') return null;
+  const decoded = decodeURIComponent(range);
+  const title = decoded.split('!')[0];
+  return normalizeTab(title);
+}
+function canUseTab(modules: string[], range: unknown): boolean {
+  const tab = tabFromRange(range);
+  return !!tab && (TABLE_MODULES[tab] || []).some(module => modules.includes(module));
+}
 
 // Upload signature to Google Drive folder 14zJIbLf9bfeM0RZiwsPDXGzcqfUWJw0o with name FIRMA-IDTICKET.jpg
 async function uploadSignatureToDrive(
@@ -365,7 +406,8 @@ async function startServer() {
 
   app.get('/api/auth/me', (req, res) => {
     if (!authReady()) return res.status(503).json({ error: 'Configura ADMIN_EMAIL, ADMIN_PASSWORD_HASH y SESSION_SECRET en el servidor' });
-    res.json(isAdmin(req) ? { authenticated: true, email: configuredAdminEmail(), role: 'admin' } : { authenticated: false });
+    const user = currentUser(req);
+    res.json(user ? { authenticated: true, ...user, tables: user.role === 'admin' ? Object.keys(TABLE_MODULES).filter(t => t !== 'ACCESOS') : Object.keys(TABLE_MODULES).filter(t => canUseTab(user.modules, t)) } : { authenticated: false });
   });
 
   app.post('/api/auth/login', (req, res) => {
@@ -375,13 +417,14 @@ async function startServer() {
     if (attempt && attempt.until > Date.now() && attempt.count >= 5) {
       return res.status(429).json({ error: 'Demasiados intentos. Vuelve a probar en 15 minutos.' });
     }
-    if (!verifyAdminPassword(req.body?.email, req.body?.password)) {
+    const user = authenticate(req.body?.email, req.body?.password);
+    if (!user) {
       failedLogins.set(key, { count: (attempt?.until || 0) > Date.now() ? attempt!.count + 1 : 1, until: Date.now() + 15 * 60_000 });
       return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
     }
     failedLogins.delete(key);
-    issueSession(res);
-    res.json({ authenticated: true, email: configuredAdminEmail(), role: 'admin' });
+    issueSession(res, user);
+    res.json({ authenticated: true, email: user.email, role: user.role, modules: user.modules });
   });
 
   app.post('/api/auth/logout', (_req, res) => {
@@ -389,13 +432,26 @@ async function startServer() {
     res.json({ authenticated: false });
   });
 
-  app.use('/api/google', requireAdmin, express.raw({ type: () => true, limit: '20mb' }));
+  app.get('/api/users', requireAdmin, (_req, res) => {
+    try { res.json(listUsers()); } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+  app.put('/api/users', requireAdmin, (req, res) => {
+    try { saveUser(req.body); res.json({ success: true }); }
+    catch (error: any) { res.status(400).json({ error: error.message }); }
+  });
+  const requireModules = (...modules: string[]): express.RequestHandler => (req, res, next) => {
+    const user = currentUser(req);
+    if (user && (user.role === 'admin' || modules.some(module => user.modules.includes(module)))) return next();
+    res.status(403).json({ error: 'Módulo no autorizado' });
+  };
+
+  app.use('/api/google', requireUser, express.raw({ type: () => true, limit: '20mb' }));
 
   // Fixed Google API proxy: credentials stay on the server. Never proxy arbitrary hosts.
   app.use('/api/google/:service', async (req, res) => {
     try {
       const service = req.params.service;
-      const rawPath = req.originalUrl.slice(`/api/google/${service}`.length);
+      let rawPath = req.originalUrl.slice(`/api/google/${service}`.length);
       const [pathname] = rawPath.split('?');
       let base: string;
       if (service === 'health' && req.method === 'GET') {
@@ -405,8 +461,41 @@ async function startServer() {
       if (service === 'sheets') {
         const match = pathname.match(/^\/v4\/spreadsheets\/([A-Za-z0-9_-]+)(?:\/|:|$)/);
         if (!match || !ALLOWED_SHEETS.has(match[1])) return res.status(403).json({ error: 'Hoja no permitida' });
+        const user = currentUser(req)!;
+        if (user.role !== 'admin') {
+          const isQuotes = match[1] === '1CfvIvSb1lpF3qAEfblOSmsXEsqgPC2lqZInyYmMEHog';
+          if (isQuotes && !user.modules.includes('COTIZACIONES')) return res.sendStatus(403);
+          const tail = pathname.slice(match[0].length - (match[0].endsWith('/') || match[0].endsWith(':') ? 1 : 0));
+          const parsed = req.body && Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString('utf8') || '{}') : (req.body || {});
+          if (tail.startsWith(':batchUpdate')) return res.sendStatus(403); // structural changes are administrator only
+          if (tail === '' && req.method !== 'GET') return res.sendStatus(403);
+          if (tail === '') rawPath = `/v4/spreadsheets/${match[1]}?fields=sheets.properties`;
+          if (tail.startsWith('/values:batchGet')) {
+            const ranges = new URL(req.originalUrl, 'http://localhost').searchParams.getAll('ranges');
+            if (!ranges.length || ranges.some(range => !canUseTab(user.modules, range))) return res.sendStatus(403);
+          } else if (tail.startsWith('/values:batchUpdate')) {
+            if (!Array.isArray(parsed.data) || parsed.data.some((item: any) => !canUseTab(user.modules, item.range))) return res.sendStatus(403);
+          } else if (tail.startsWith('/values/')) {
+            if (!canUseTab(user.modules, tail.slice('/values/'.length).split(':')[0])) return res.sendStatus(403);
+          } else if (tail !== '') return res.sendStatus(403);
+        }
         base = 'https://sheets.googleapis.com';
       } else if (service === 'drive') {
+        const user = currentUser(req)!;
+        if (user.role !== 'admin') {
+          const fileMatch = pathname.match(/^\/v3\/files\/([A-Za-z0-9_-]+)$/);
+          const permissionMatch = pathname.match(/^\/v3\/files\/([A-Za-z0-9_-]+)\/permissions$/);
+          if (permissionMatch) {
+            if (req.method !== 'POST' || uploadedFiles.get(permissionMatch[1]) !== user.email) return res.sendStatus(403);
+          } else if (fileMatch && req.method === 'GET') {
+            const metadata = await fetch(`https://www.googleapis.com/drive/v3/files/${fileMatch[1]}?fields=parents&supportsAllDrives=true`, {
+              headers: { Authorization: `Bearer ${await getServerToken()}` }
+            });
+            if (!metadata.ok) return res.sendStatus(403);
+            const file = await metadata.json() as { parents?: string[] };
+            if (!file.parents?.some(folder => FOLDER_MODULES[folder]?.some(module => user.modules.includes(module)))) return res.sendStatus(403);
+          } else return res.sendStatus(403);
+        }
         if (req.method !== 'GET' || !/^\/v3\/files\/[A-Za-z0-9_-]+$/.test(pathname)) {
           // Only permission changes on files uploaded during this server process.
           const permission = pathname.match(/^\/v3\/files\/([A-Za-z0-9_-]+)\/permissions$/);
@@ -422,6 +511,8 @@ async function startServer() {
         if (!metadata || !ALLOWED_FOLDERS.has(metadata[1])) {
           return res.status(403).json({ error: 'Carpeta de destino no permitida' });
         }
+        const user = currentUser(req)!;
+        if (user.role !== 'admin' && !FOLDER_MODULES[metadata[1]]?.some(module => user.modules.includes(module))) return res.sendStatus(403);
         base = 'https://www.googleapis.com/upload';
       } else return res.sendStatus(404);
 
@@ -431,11 +522,16 @@ async function startServer() {
           Authorization: `Bearer ${await getServerToken()}`,
           ...(req.headers['content-type'] ? { 'Content-Type': String(req.headers['content-type']) } : {})
         },
-        body: ['GET', 'HEAD'].includes(req.method) ? undefined : req.body
+        body: ['GET', 'HEAD'].includes(req.method) ? undefined : Buffer.isBuffer(req.body) ? req.body : JSON.stringify(req.body)
       });
       const body = Buffer.from(await upstream.arrayBuffer());
       if (service === 'upload' && upstream.ok) {
-        try { const id = JSON.parse(body.toString()).id; if (id) uploadedFiles.add(id); } catch {}
+        try { const id = JSON.parse(body.toString()).id; if (id) uploadedFiles.set(id, currentUser(req)!.email); } catch {}
+      }
+      if (service === 'sheets' && currentUser(req)?.role !== 'admin' && pathname.match(/^\/v4\/spreadsheets\/[A-Za-z0-9_-]+$/) && upstream.ok) {
+        const data = JSON.parse(body.toString('utf8'));
+        if (Array.isArray(data.sheets)) data.sheets = data.sheets.filter((sheet: any) => canUseTab(currentUser(req)!.modules, sheet.properties?.title));
+        return res.status(upstream.status).json(data);
       }
       res.status(upstream.status);
       res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
@@ -535,7 +631,7 @@ async function startServer() {
   });
 
   // API to manually force sync of an existing pending signature to Drive and Sheet
-  app.post('/api/sync-signature-to-sheet/:id', requireAdmin, async (req, res) => {
+  app.post('/api/sync-signature-to-sheet/:id', requireModules('TECNICO','TICKET'), async (req, res) => {
     const { id } = req.params;
     let token: string | null = null;
     try { token = await getServerToken(); } catch (error) { console.error(error); }
@@ -575,7 +671,7 @@ async function startServer() {
   });
 
   // API to get a signature (polled by technician app)
-  app.get('/api/signatures/:id', requireAdmin, (req, res) => {
+  app.get('/api/signatures/:id', requireModules('TECNICO','TICKET'), (req, res) => {
     const { id } = req.params;
     let data = signatures.get(id);
     if (!data) {
@@ -599,7 +695,7 @@ async function startServer() {
   });
 
   // API to delete a signature once completed
-  app.delete('/api/signatures/:id', requireAdmin, (req, res) => {
+  app.delete('/api/signatures/:id', requireModules('TECNICO','TICKET'), (req, res) => {
     const { id } = req.params;
     signatures.delete(id);
     deleteSignatureFromDisk(id);
@@ -607,7 +703,7 @@ async function startServer() {
   });
 
   // API to store public ticket & activities info (so client opening public link can view details)
-  app.post('/api/public-ticket/:id', requireAdmin, (req, res) => {
+  app.post('/api/public-ticket/:id', requireModules('TICKET','TECNICO'), (req, res) => {
     const { id } = req.params;
     const data = req.body;
     if (!data) return res.status(400).json({ error: 'No data provided' });
@@ -637,7 +733,7 @@ async function startServer() {
   
 
 
-app.post('/api/grammar', requireAdmin, async (req, res) => {
+app.post('/api/grammar', requireModules('TECNICO','INFORMES'), async (req, res) => {
   const { text } = req.body;
   if (!text) return res.status(400).json({ error: 'No text provided' });
   

@@ -25,6 +25,7 @@ function readUsers(): User[] {
   }
 }
 function writeUsers(users: User[]): void {
+  if (process.env.VERCEL) throw new Error('Los usuarios adicionales necesitan almacenamiento persistente; Vercel no puede guardar esta base en un archivo local');
   const file = storePath();
   if (!file) throw new Error('Configura CRM_USERS_FILE en un volumen persistente');
   fs.mkdirSync(path.dirname(file), { recursive: true });

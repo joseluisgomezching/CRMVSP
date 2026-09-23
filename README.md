@@ -13,6 +13,12 @@ Migración del proyecto de Google AI Studio a un proyecto Node.js propio. No req
 
 **Si el login muestra «Unexpected token ... is not valid JSON»:** la URL abierta sirve la interfaz pero `/api/auth/login` no llega al servidor Express. Abre la URL del proceso `npm run dev` o despliega la app como servicio Node.js con `npm start`; una vista estática o GitHub Pages no ejecuta la API. Comprueba que `/api/auth/me` responda JSON y que `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` y `SESSION_SECRET` estén configurados en el servidor. Subir código a GitHub no crea esas variables ni activa el login.
 
+### Despliegue en Vercel
+
+`vercel.json` dirige `/api/*` a una Function que ejecuta Express y sirve el resto desde Vite. En **Project Settings → Environment Variables**, configura `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` y `SESSION_SECRET` para Production; luego vuelve a desplegar. La comprobación inicial es abrir `https://crmvsp.vercel.app/api/auth/me`: debe responder JSON (503 si faltan secretos, `{"authenticated":false}` si el login está listo), nunca la página 404 de Vercel. Configura también la identidad de servidor de Sheets y Drive antes de usar los módulos con datos reales.
+
+Las Functions de Vercel no tienen un disco persistente para `CRM_USERS_FILE`; por seguridad, el panel rechaza la creación de empleados en ese entorno hasta integrar una base de datos persistente. Las firmas y los tickets públicos guardados en `/tmp` tampoco son duraderos allí. El acceso de administrador usa solo las variables privadas y sí puede funcionar sin ese archivo.
+
 Las hojas configuradas son la base principal y la de cotizaciones. Las carpetas usadas para fotos, firmas y guías deben admitir las operaciones de Drive de la cuenta de servicio. Para subir archivos mediante cuenta de servicio, usa una unidad compartida: las cuentas de servicio no tienen cuota propia de almacenamiento en Mi unidad. Las carpetas en Mi unidad requieren el token de actualización del propietario. Ajusta la configuración del proveedor de alojamiento para `supportsAllDrives` si la unidad lo requiere.
 
 ## Alcance y decisiones pendientes

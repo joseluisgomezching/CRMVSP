@@ -2,7 +2,6 @@ import { GoogleGenAI } from "@google/genai";
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { createServer as createViteServer } from 'vite';
 import { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import { authReady, clearSession, currentUser, authenticate, issueSession, requireAdmin, requireUser, listUsers, saveUser } from './serverAuth';
 
@@ -395,9 +394,8 @@ function getPublicTicketFromDisk(id: string): any | null {
   return null;
 }
 
-async function startServer() {
+export async function createApp() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
   app.set('trust proxy', 1);
   const failedLogins = new Map<string, { count: number; until: number }>();
 
@@ -753,8 +751,12 @@ ${text}`,
   }
 });
 
+  // API failures must be JSON, including when a Vercel rewrite reaches this app.
+  app.use('/api', (_req, res) => res.status(404).json({ error: 'Ruta de API no encontrada' }));
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -768,9 +770,12 @@ ${text}`,
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  return app;
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  createApp().then(app => {
+    const port = Number(process.env.PORT) || 3000;
+    app.listen(port, "0.0.0.0", () => console.log(`Server running on http://localhost:${port}`));
+  }).catch(error => { console.error(error); process.exitCode = 1; });
+}

@@ -3,7 +3,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
-import { GoogleAuth } from 'google-auth-library';
+import { GoogleAuth, OAuth2Client } from 'google-auth-library';
 
 interface StoredSignature {
   signature: string;
@@ -23,10 +23,15 @@ const googleAuth = new GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 });
 
+const ownerOAuth = process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET && process.env.GOOGLE_OAUTH_REFRESH_TOKEN
+  ? new OAuth2Client(process.env.GOOGLE_OAUTH_CLIENT_ID, process.env.GOOGLE_OAUTH_CLIENT_SECRET)
+  : null;
+if (ownerOAuth) ownerOAuth.setCredentials({ refresh_token: process.env.GOOGLE_OAUTH_REFRESH_TOKEN });
+
 async function getServerToken(): Promise<string> {
-  const client = await googleAuth.getClient();
+  const client = ownerOAuth || await googleAuth.getClient();
   const result = await client.getAccessToken();
-  if (!result.token) throw new Error('Cuenta de servicio sin acceso a Google API');
+  if (!result.token) throw new Error('Servidor sin credenciales para Google Sheets y Drive');
   return result.token;
 }
 

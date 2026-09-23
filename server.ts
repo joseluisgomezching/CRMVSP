@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { GoogleAuth, OAuth2Client } from 'google-auth-library';
+import { authReady, clearSession, configuredAdminEmail, isAdmin, issueSession, requireAdmin, verifyAdminPassword } from './serverAuth';
 
 interface StoredSignature {
   signature: string;
@@ -356,10 +357,39 @@ function getPublicTicketFromDisk(id: string): any | null {
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
+  app.set('trust proxy', 1);
+  const failedLogins = new Map<string, { count: number; until: number }>();
 
   // The app and API are served from the same origin.
-  app.use('/api/google', express.raw({ type: () => true, limit: '20mb' }));
   app.use(express.json({ limit: '15mb' }));
+
+  app.get('/api/auth/me', (req, res) => {
+    if (!authReady()) return res.status(503).json({ error: 'Configura ADMIN_EMAIL, ADMIN_PASSWORD_HASH y SESSION_SECRET en el servidor' });
+    res.json(isAdmin(req) ? { authenticated: true, email: configuredAdminEmail(), role: 'admin' } : { authenticated: false });
+  });
+
+  app.post('/api/auth/login', (req, res) => {
+    if (!authReady()) return res.status(503).json({ error: 'Acceso del administrador aún no configurado' });
+    const key = req.ip || req.socket.remoteAddress || 'unknown';
+    const attempt = failedLogins.get(key);
+    if (attempt && attempt.until > Date.now() && attempt.count >= 5) {
+      return res.status(429).json({ error: 'Demasiados intentos. Vuelve a probar en 15 minutos.' });
+    }
+    if (!verifyAdminPassword(req.body?.email, req.body?.password)) {
+      failedLogins.set(key, { count: (attempt?.until || 0) > Date.now() ? attempt!.count + 1 : 1, until: Date.now() + 15 * 60_000 });
+      return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
+    }
+    failedLogins.delete(key);
+    issueSession(res);
+    res.json({ authenticated: true, email: configuredAdminEmail(), role: 'admin' });
+  });
+
+  app.post('/api/auth/logout', (_req, res) => {
+    clearSession(res);
+    res.json({ authenticated: false });
+  });
+
+  app.use('/api/google', requireAdmin, express.raw({ type: () => true, limit: '20mb' }));
 
   // Fixed Google API proxy: credentials stay on the server. Never proxy arbitrary hosts.
   app.use('/api/google/:service', async (req, res) => {
@@ -505,7 +535,7 @@ async function startServer() {
   });
 
   // API to manually force sync of an existing pending signature to Drive and Sheet
-  app.post('/api/sync-signature-to-sheet/:id', async (req, res) => {
+  app.post('/api/sync-signature-to-sheet/:id', requireAdmin, async (req, res) => {
     const { id } = req.params;
     let token: string | null = null;
     try { token = await getServerToken(); } catch (error) { console.error(error); }
@@ -545,7 +575,7 @@ async function startServer() {
   });
 
   // API to get a signature (polled by technician app)
-  app.get('/api/signatures/:id', (req, res) => {
+  app.get('/api/signatures/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     let data = signatures.get(id);
     if (!data) {
@@ -569,7 +599,7 @@ async function startServer() {
   });
 
   // API to delete a signature once completed
-  app.delete('/api/signatures/:id', (req, res) => {
+  app.delete('/api/signatures/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     signatures.delete(id);
     deleteSignatureFromDisk(id);
@@ -577,7 +607,7 @@ async function startServer() {
   });
 
   // API to store public ticket & activities info (so client opening public link can view details)
-  app.post('/api/public-ticket/:id', (req, res) => {
+  app.post('/api/public-ticket/:id', requireAdmin, (req, res) => {
     const { id } = req.params;
     const data = req.body;
     if (!data) return res.status(400).json({ error: 'No data provided' });
@@ -607,7 +637,7 @@ async function startServer() {
   
 
 
-app.post('/api/grammar', async (req, res) => {
+app.post('/api/grammar', requireAdmin, async (req, res) => {
   const { text } = req.body;
   if (!text) return res.status(400).json({ error: 'No text provided' });
   

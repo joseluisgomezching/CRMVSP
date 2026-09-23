@@ -1,5 +1,7 @@
 import type { Request, Response } from 'express';
-import { createApp } from '../server';
+import server from '../server.cjs';
+
+const { createApp } = server;
 
 let appPromise: ReturnType<typeof createApp> | undefined;
 

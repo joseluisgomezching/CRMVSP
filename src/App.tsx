@@ -30,6 +30,13 @@ import CotizacionesModule from './modules/Cotizaciones';
 import UsuariosModule from './modules/Usuarios';
 import { auth } from './serviceAccess';
 
+async function readAuthResponse(response: Response) {
+  if (!response.headers.get('content-type')?.toLowerCase().includes('application/json')) {
+    throw new Error('Esta página no tiene activo el servidor de CRMVSP. Abre la aplicación desde el servidor Node.js, no desde una vista estática.');
+  }
+  return response.json();
+}
+
 export default function App() {
   const [activeModule, setActiveModule] = useState<string | null>(null);
   const [authState, setAuthState] = useState<'loading' | 'signedout' | 'ready' | 'unconfigured'>('loading');
@@ -45,7 +52,7 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
     fetch('/api/auth/me').then(async response => {
-      const data = await response.json();
+      const data = await readAuthResponse(response);
       if (!mounted) return;
       if (response.status === 503) {
         setLoginError(data.error);
@@ -54,8 +61,8 @@ export default function App() {
         if (data.authenticated) { auth.currentUser.displayName = data.email; setEmail(data.email); setRole(data.role); setAllowedModules(data.modules || []); }
         setAuthState(data.authenticated ? 'ready' : 'signedout');
       }
-    }).catch(() => {
-      if (mounted) { setLoginError('No se pudo conectar con el servidor.'); setAuthState('signedout'); }
+    }).catch((error: Error) => {
+      if (mounted) { setLoginError(error.message || 'No se pudo conectar con el servidor.'); setAuthState('signedout'); }
     });
     return () => { mounted = false; };
   }, []);
@@ -69,7 +76,7 @@ export default function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       });
-      const data = await response.json();
+      const data = await readAuthResponse(response);
       if (!response.ok) throw new Error(data.error || 'No se pudo iniciar sesión');
       auth.currentUser.displayName = data.email;
       setRole(data.role);

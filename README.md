@@ -1,6 +1,6 @@
 # CRMVSP · VSP Desk 2.0
 
-Migración del proyecto de Google AI Studio a un proyecto Node.js propio. La interfaz funciona sin inicio de sesión de Google. React y Vite sirven la interfaz; Express usa una identidad de servidor para Sheets y Drive. La clave privada no se distribuye al navegador ni debe guardarse en GitHub.
+Migración del proyecto de Google AI Studio a un proyecto Node.js propio. No requiere inicio de sesión con Google: el administrador usa correo y contraseña propios de la aplicación. React y Vite sirven la interfaz; Express usa una identidad de servidor para Sheets y Drive. Ninguna clave privada debe guardarse en GitHub.
 
 ## Ejecutar
 
@@ -8,17 +8,19 @@ Migración del proyecto de Google AI Studio a un proyecto Node.js propio. La int
 2. Activa Google Sheets API y Google Drive API en un proyecto de Google Cloud y crea una cuenta de servicio.
 3. Si usas cuenta de servicio, comparte las dos hojas de cálculo y las carpetas de destino con su correo, con permiso de editor. La opción «Cualquiera con el enlace» por sí sola no autoriza escrituras mediante la API.
 4. Guarda el JSON completo de la cuenta de servicio como secreto del servidor `GOOGLE_SERVICE_ACCOUNT_JSON`; alternativamente usa Application Default Credentials. Si tus carpetas están en Mi unidad y necesitas subir fotos o PDFs, usa las variables `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` y `GOOGLE_OAUTH_REFRESH_TOKEN` de una cuenta propietaria, obtenida una sola vez con consentimiento offline y permisos de Drive y Sheets. Este método tampoco exige login al usuario final. Nunca uses una variable `VITE_` para esta clave. Configura `VITE_PUBLIC_APP_URL` al dominio final para los enlaces de firma y `GEMINI_API_KEY` si usarás la corrección de texto.
-5. Ejecuta `npm run dev` en desarrollo. Para producción, `npm run build` y `npm start`. El servidor escucha en el puerto 3000; configura el proxy y TLS en el proveedor de alojamiento.
+5. Configura el correo de la única cuenta administradora como secreto `ADMIN_EMAIL`. En una terminal interactiva ejecuta `node scripts/hash-password.cjs`, elige una contraseña de 12 caracteres o más y guarda el valor devuelto como secreto `ADMIN_PASSWORD_HASH`. Genera `SESSION_SECRET` con `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` y guárdalo como secreto del servidor. No pongas estos valores en el repositorio.
+6. Ejecuta `npm run dev` en desarrollo. Para producción, `npm run build` y `npm start`. El servidor escucha en el puerto indicado por `PORT` o, en su defecto, 3000; configura TLS en el proveedor de alojamiento.
 
 Las hojas configuradas son la base principal y la de cotizaciones. Las carpetas usadas para fotos, firmas y guías deben admitir las operaciones de Drive de la cuenta de servicio. Para subir archivos mediante cuenta de servicio, usa una unidad compartida: las cuentas de servicio no tienen cuota propia de almacenamiento en Mi unidad. Las carpetas en Mi unidad requieren el token de actualización del propietario. Ajusta la configuración del proveedor de alojamiento para `supportsAllDrives` si la unidad lo requiere.
 
 ## Alcance y decisiones pendientes
 
-- Sin identidad de usuario, los permisos individuales de la antigua hoja `ACCESOS` ya no se aplican; ese menú está oculto. Toda persona con acceso a la URL puede consultar y modificar datos mediante la aplicación. Antes de publicar un CRM con datos personales, limita el acceso al dominio o agrega un sistema de usuarios propio.
+- Solo la cuenta administradora puede abrir los módulos y utilizar las rutas internas de Sheets y Drive. La hoja antigua `ACCESOS` permanece oculta; todavía no hay cuentas para otros empleados.
+- Los enlaces de firma enviados a clientes son públicos. Quien conozca un enlace de firma puede enviarla para ese ticket; antes de ampliar el uso a clientes externos conviene añadir enlaces firmados de un solo uso.
 - El envío automático desde Gmail no puede funcionar con una cuenta de servicio corriente y no se presenta como envío completado: la acción muestra un error hasta configurar un proveedor de correo en el servidor. El conector Gmail de esta conversación no es una credencial de ejecución de la aplicación.
 - No se migraron los datos: las hojas y carpetas actuales continúan siendo la fuente de información. Para desligarse también de Google Sheets/Drive hará falta migrar datos y almacenamiento.
 - Las firmas recibidas y los tickets públicos se conservan en `/tmp` según el código original; en alojamiento sin disco persistente necesitas almacenamiento duradero.
 
 ## Verificación
 
-`npm run lint` y `npm run build` comprueban tipos y compilación. Una prueba funcional de Sheets/Drive requiere configurar los secretos y permisos indicados arriba. No publiques una clave JSON en este repositorio ni en un enlace de firma.
+`npm run lint` y `npm run build` comprueban tipos y compilación. Una prueba funcional de Sheets/Drive requiere configurar los secretos y permisos indicados arriba. El servidor devuelve 503 mientras falte `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` o `SESSION_SECRET`. No publiques claves en este repositorio ni en un enlace de firma.

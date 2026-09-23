@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import {
   Ticket,
   CheckCircle,
@@ -13,6 +13,7 @@ import {
   Truck,
   Package,
   ArrowLeft,
+  LogOut,
 } from 'lucide-react';
 import TicketsModule from './modules/Tickets';
 import TecnicoModule from './modules/Tecnico';
@@ -25,11 +26,58 @@ import EmpresasModule from './modules/Empresas';
 import EditarTicketsModule from './modules/EditarTickets';
 import ActividadesInternasModule from './modules/ActividadesInternas';
 import CotizacionesModule from './modules/Cotizaciones';
+import { auth } from './serviceAccess';
 
 export default function App() {
   const [activeModule, setActiveModule] = useState<string | null>(null);
-  // There is no signed-in identity. All available modules are displayed.
-  const isAdmin = true;
+  const [authState, setAuthState] = useState<'loading' | 'signedout' | 'ready' | 'unconfigured'>('loading');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const isAdmin = authState === 'ready';
+
+  useEffect(() => {
+    let mounted = true;
+    fetch('/api/auth/me').then(async response => {
+      const data = await response.json();
+      if (!mounted) return;
+      if (response.status === 503) {
+        setLoginError(data.error);
+        setAuthState('unconfigured');
+      } else {
+        if (data.authenticated) { auth.currentUser.displayName = data.email; setEmail(data.email); }
+        setAuthState(data.authenticated ? 'ready' : 'signedout');
+      }
+    }).catch(() => {
+      if (mounted) { setLoginError('No se pudo conectar con el servidor.'); setAuthState('signedout'); }
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  const handleLogin = async (event: FormEvent) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setLoginError('');
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'No se pudo iniciar sesión');
+      auth.currentUser.displayName = data.email;
+      setPassword('');
+      setAuthState('ready');
+    } catch (error: any) { setLoginError(error.message); }
+    finally { setSubmitting(false); }
+  };
+
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    setActiveModule(null);
+    setAuthState('signedout');
+  };
 
   const allMenuItems = [
     { 
@@ -163,6 +211,30 @@ export default function App() {
     return <ClientSignatureView ticketId={signTicketId} />;
   }
 
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 text-slate-100">
+        <form onSubmit={handleLogin} className="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-900 p-7 shadow-2xl">
+          <h1 className="text-2xl font-bold">VSP Desk 2.0</h1>
+          <p className="mt-2 mb-6 text-sm text-slate-400">Acceso del administrador</p>
+          <label className="block text-sm mb-4">Correo electrónico
+            <input type="email" autoComplete="username" required value={email} onChange={e => setEmail(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-white" />
+          </label>
+          <label className="block text-sm mb-5">Contraseña
+            <input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-white" />
+          </label>
+          {loginError && <p role="alert" className="mb-4 text-sm text-rose-300">{loginError}</p>}
+          <button type="submit" disabled={authState === 'loading' || authState === 'unconfigured' || submitting}
+            className="w-full rounded-lg bg-blue-600 px-4 py-2 font-semibold hover:bg-blue-500 disabled:opacity-50">
+            {submitting ? 'Ingresando…' : authState === 'loading' ? 'Comprobando acceso…' : 'Ingresar'}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen w-full bg-slate-950 overflow-hidden font-sans text-slate-200">
       <nav className="flex items-center justify-between px-3 sm:px-8 py-2 sm:py-3 bg-slate-900 border-b border-slate-800 shadow-sm shrink-0 z-30">
@@ -190,7 +262,8 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-          <div className="text-xs text-slate-300">Acceso directo</div>
+          <div className="hidden sm:block text-right text-xs text-slate-300"><strong>Administrador</strong><br />{email}</div>
+          <button onClick={handleLogout} title="Cerrar sesión" className="rounded-lg p-2 text-slate-300 hover:bg-slate-800 hover:text-white"><LogOut className="h-5 w-5" /></button>
         </div>
       </nav>
 
@@ -224,7 +297,7 @@ export default function App() {
                   <p className="text-[10px] sm:text-xs text-slate-400">Selecciona el módulo para operar</p>
                 </div>
                 <div className="px-2.5 py-1 bg-blue-950/80 text-blue-300 border border-blue-800/50 rounded-full text-[9px] sm:text-xs font-bold uppercase tracking-wider shrink-0">
-                  Acceso directo
+                  Administrador
                 </div>
               </div>
               {menuItems.length === 0 ? (

@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { createApp } from '../server';
 
-const appPromise = createApp();
+let appPromise: ReturnType<typeof createApp> | undefined;
 
 // Vercel rewrites /api/* here and passes the original path as a query parameter.
 export default async function handler(req: Request, res: Response) {
@@ -13,6 +13,12 @@ export default async function handler(req: Request, res: Response) {
   }
   url.searchParams.delete('path');
   req.url = `/api/${path}${url.searchParams.size ? `?${url.searchParams.toString()}` : ''}`;
-  const app = await appPromise;
-  app(req, res);
+  try {
+    const app = await (appPromise ||= createApp());
+    app(req, res);
+  } catch (error) {
+    appPromise = undefined;
+    console.error('CRMVSP API startup failed:', error);
+    if (!res.headersSent) res.status(503).json({ error: 'La API no pudo iniciar. Revisa los registros de la función en Vercel.' });
+  }
 }

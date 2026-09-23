@@ -16,20 +16,21 @@ interface StoredSignature {
 
 const signatures = new Map<string, StoredSignature>();
 const SIGNATURES_DIR = path.join('/tmp', 'vsp_signatures');
-const googleAuth = new GoogleAuth({
-  credentials: process.env.GOOGLE_SERVICE_ACCOUNT_JSON
-    ? JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON)
-    : undefined,
-  scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-});
-
-const ownerOAuth = process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET && process.env.GOOGLE_OAUTH_REFRESH_TOKEN
-  ? new OAuth2Client(process.env.GOOGLE_OAUTH_CLIENT_ID, process.env.GOOGLE_OAUTH_CLIENT_SECRET)
-  : null;
-if (ownerOAuth) ownerOAuth.setCredentials({ refresh_token: process.env.GOOGLE_OAUTH_REFRESH_TOKEN });
+let googleAuth: GoogleAuth | undefined;
 
 async function getServerToken(): Promise<string> {
-  const client = ownerOAuth || await googleAuth.getClient();
+  let client;
+  if (process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET && process.env.GOOGLE_OAUTH_REFRESH_TOKEN) {
+    const ownerOAuth = new OAuth2Client(process.env.GOOGLE_OAUTH_CLIENT_ID, process.env.GOOGLE_OAUTH_CLIENT_SECRET);
+    ownerOAuth.setCredentials({ refresh_token: process.env.GOOGLE_OAUTH_REFRESH_TOKEN });
+    client = ownerOAuth;
+  } else {
+    googleAuth ||= new GoogleAuth({
+      credentials: process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON) : undefined,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    });
+    client = await googleAuth.getClient();
+  }
   const result = await client.getAccessToken();
   if (!result.token) throw new Error('Servidor sin credenciales para Google Sheets y Drive');
   return result.token;
@@ -755,7 +756,7 @@ ${text}`,
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Ruta de API no encontrada' }));
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -771,11 +772,4 @@ ${text}`,
   }
 
   return app;
-}
-
-if (!process.env.VERCEL) {
-  createApp().then(app => {
-    const port = Number(process.env.PORT) || 3000;
-    app.listen(port, "0.0.0.0", () => console.log(`Server running on http://localhost:${port}`));
-  }).catch(error => { console.error(error); process.exitCode = 1; });
 }

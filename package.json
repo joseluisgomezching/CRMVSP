@@ -4,8 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
-    "build": "node scripts/patch-html2canvas.cjs && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "dev": "tsx start.ts",
+    "build": "node scripts/patch-html2canvas.cjs && vite build && esbuild start.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "postinstall": "node scripts/patch-html2canvas.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
